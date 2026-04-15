@@ -179,6 +179,7 @@ class SnakeGame:
         self._reset()
         led.on()
         wait_btn_release()
+        self._draw()
 
         while True:
             pressed, released, long_hold = _btn_tracker.update()
@@ -188,12 +189,16 @@ class SnakeGame:
                 led.off()
                 return
 
+            updated = False
+
             self._tick += 1
             if self._tick >= self._speed:
                 self._tick = 0
                 self._update()
+                updated = True
 
-            self._draw()
+            if updated:
+                self._draw()
 
             if not self._alive:
                 self._show_game_over()
@@ -208,12 +213,13 @@ class SnakeGame:
 
                     if released:
                         self._reset()
+                        self._draw()
                         wait_btn_release()
                         break
 
-                    sleep(0.03)
+                    sleep(0.05)
 
-            sleep(0.03)
+            sleep(0.05)
 
     def _reset(self):
         cx, cy = self.COLS // 2, self.ROWS // 2
@@ -282,7 +288,7 @@ class SnakeGame:
 
     def _draw(self):
         display.fill(BLACK)
-        display.rect(0, 0, DW, DH, WHITE)
+        display.rect(0, 0, DW, DH, GREEN)
 
         fc, fr = self._food
         display.fill_rect(fc * self.CELL + 1, fr * self.CELL + 1,
@@ -354,7 +360,7 @@ class MarioGame:
                 led.off()
                 return
 
-            sleep(0.033)
+            sleep(0.06)
 
     def _reset(self):
         self._px = 10.0
@@ -430,7 +436,7 @@ class MarioGame:
             self._won = True
 
     def _draw(self):
-        display.fill(BLUE)
+        display.fill(BLACK)
 
         for i, (plx, ply, plw, plh) in enumerate(self.PLATFORMS):
             display.fill_rect(plx, ply, plw, plh, GREEN if i == 0 else YELLOW)
@@ -495,36 +501,42 @@ def main_menu():
     sel = 0
     n = len(_GAMES)
     wait_btn_release()
+    need_redraw = True
 
     while True:
         pressed, released, long_hold = _btn_tracker.update()
 
-        display.fill(BLACK)
-        display.text("=  GAME  MENU  =", 28, 30)
+        if need_redraw:
+            display.fill(BLACK)
+            display.text("=  GAME  MENU  =", 28, 30)
 
-        for i, (name, _cls) in enumerate(_GAMES):
-            y = 90 + i * 40
-            label = ">  " + name if i == sel else "   " + name
-            display.text(label, 50, y)
+            for i, (name, _cls) in enumerate(_GAMES):
+                y = 90 + i * 40
+                label = ">  " + name if i == sel else "   " + name
+                display.text(label, 50, y)
 
-        display.text("A = launch game", 35, DH - 50)
-        display.text("Hold A = menu", 40, DH - 30)
-        refresh()
+            display.text("A = launch game", 35, DH - 50)
+            display.text("Hold A = menu", 40, DH - 30)
+            refresh()
+            need_redraw = False
 
         d = _joy_edge.get()
         if d == UP:
             sel = (sel - 1) % n
             beep(700, 0.4, 0.04)
+            need_redraw = True
         elif d == DOWN:
             sel = (sel + 1) % n
             beep(700, 0.4, 0.04)
+            need_redraw = True
 
         if pressed:
             beep(1000, 0.5, 0.05)
             _GAMES[sel][1]().run()
             wait_btn_release()
+            need_redraw = True
 
-        sleep(0.05)
+        sleep(0.08)
 
 # =============================================================================
 # START
