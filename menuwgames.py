@@ -233,11 +233,14 @@ class SnakeGame:
         self._place_food()
 
     def _place_food(self):
-        while True:
-            f = (randint(0, self.COLS - 1), randint(0, self.ROWS - 1))
-            if f not in self._snake:
-                self._food = f
-                return
+     while True:
+        f = (
+            randint(1, self.COLS - 2),
+            randint(1, self.ROWS - 2)
+        )
+        if f not in self._snake and f != self._snake[0]:
+            self._food = f
+            return
 
     def _handle_input(self):
         d = _joy_edge.get()
