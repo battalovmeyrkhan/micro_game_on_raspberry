@@ -26,7 +26,7 @@ buzzer   = Buzzer("C")
 display  = _display_obj
 
 # -----------------------------------------------------------------------------
-# Colour aliases
+# Colours
 # -----------------------------------------------------------------------------
 BLACK   = display.BLACK
 WHITE   = display.WHITE
@@ -45,11 +45,10 @@ DH = display.height
 # =============================================================================
 
 def refresh():
-    """Some pibody displays draw immediately and have no show()."""
+    # This display updates immediately, no display.show()
     pass
 
 def beep(freq, volume, duration):
-    """Compatible buzzer call."""
     try:
         buzzer.make_sound(freq, volume, duration)
     except TypeError:
@@ -70,7 +69,7 @@ LEFT   = 2
 RIGHT  = 3
 CENTER = 4
 
-# Joystick returns float roughly 0.0..1.0, center near 0.5
+# Joystick returns float around 0.0..1.0, center near 0.5
 _JOY_LO = 0.35
 _JOY_HI = 0.65
 
@@ -78,6 +77,7 @@ def joy_direction():
     x = joystick.read_x()
     y = joystick.read_y()
 
+    # Inverted Y to match physical direction
     if y < _JOY_LO:
         return DOWN
     elif y > _JOY_HI:
@@ -92,54 +92,52 @@ def joy_raw():
     return joystick.read_x(), joystick.read_y()
 
 # -----------------------------------------------------------------------------
-# Button debounce with auto polarity detect
+# Simple button helpers
 # -----------------------------------------------------------------------------
-class _Btn:
-    """
-    Auto-detects idle button level at startup.
-    If idle is 0 -> pressed is 1
-    If idle is 1 -> pressed is 0
-    """
-    def __init__(self, pin):
-        self._pin = pin
-        self._pressed = False
-        self._pressed_at = 0
+_btn_idle = btn.value()
+_btn_active = 0 if _btn_idle == 1 else 1
 
-        # Sample idle state a few times at startup
-        total = 0
-        samples = 8
-        for _ in range(samples):
-            total += self._pin.value()
-            sleep(0.01)
+def btn_is_down():
+    return btn.value() == _btn_active
 
-        self._idle_value = 1 if total >= (samples // 2) else 0
-        self._active_value = 0 if self._idle_value == 1 else 1
+def wait_btn_release():
+    while btn_is_down():
+        sleep(0.01)
 
-    def is_down(self):
-        return self._pin.value() == self._active_value
+class ButtonTracker:
+    def __init__(self, hold_ms=700):
+        self.hold_ms = hold_ms
+        self.was_down = False
+        self.down_at = 0
+        self.long_fired = False
 
-    def just_pressed(self):
-        if self.is_down():
-            if not self._pressed:
-                self._pressed = True
-                self._pressed_at = ticks_ms()
-                return True
-            return False
-        else:
-            self._pressed = False
-            return False
+    def update(self):
+        now = ticks_ms()
+        down = btn_is_down()
 
-    def long_held(self, ms=700):
-        if self.is_down():
-            if not self._pressed:
-                self._pressed = True
-                self._pressed_at = ticks_ms()
-            return ticks_diff(ticks_ms(), self._pressed_at) >= ms
-        else:
-            self._pressed = False
-            return False
+        pressed = False
+        released = False
+        long_hold = False
 
-_btn = _Btn(btn)
+        if down and not self.was_down:
+            self.was_down = True
+            self.down_at = now
+            self.long_fired = False
+            pressed = True
+
+        elif not down and self.was_down:
+            self.was_down = False
+            released = True
+            self.long_fired = False
+
+        elif down and self.was_down and not self.long_fired:
+            if ticks_diff(now, self.down_at) >= self.hold_ms:
+                self.long_fired = True
+                long_hold = True
+
+        return pressed, released, long_hold
+
+_btn_tracker = ButtonTracker(700)
 
 # -----------------------------------------------------------------------------
 # Joystick edge detector
@@ -180,11 +178,13 @@ class SnakeGame:
     def run(self):
         self._reset()
         led.on()
+        wait_btn_release()
 
         while True:
+            pressed, released, long_hold = _btn_tracker.update()
             self._handle_input()
 
-            if _btn.long_held(700):
+            if long_hold:
                 led.off()
                 return
 
@@ -197,14 +197,21 @@ class SnakeGame:
 
             if not self._alive:
                 self._show_game_over()
+                wait_btn_release()
+
                 while True:
-                    if _btn.long_held(700):
+                    pressed, released, long_hold = _btn_tracker.update()
+
+                    if long_hold:
                         led.off()
                         return
-                    if _btn.just_pressed():
+
+                    if released:
                         self._reset()
+                        wait_btn_release()
                         break
-                    sleep(0.05)
+
+                    sleep(0.03)
 
             sleep(0.03)
 
@@ -294,11 +301,10 @@ class SnakeGame:
         led.off()
         display.fill(BLACK)
         display.text("GAME OVER", 70, 120)
-        display.text("Score: " + str(self._score), 75, 150)
-        display.text("A = Restart", 68, 185)
-        display.text("Hold A = Menu", 55, 215)
+        display.text("Release = Restart", 45, 150)
+        display.text("Hold A = Menu", 55, 180)
         refresh()
-        sleep(0.4)
+        sleep(0.3)
 
 # =============================================================================
 # MARIO GAME
@@ -326,16 +332,22 @@ class MarioGame:
     def run(self):
         self._reset()
         led.on()
+        wait_btn_release()
 
         while True:
-            self._handle_input()
+            pressed, released, long_hold = _btn_tracker.update()
 
-            if _btn.long_held(700):
+            if long_hold:
                 led.off()
                 return
 
+            self._handle_input(pressed)
             self._update()
             self._draw()
+
+            if self._exit_to_menu:
+                led.off()
+                return
 
             if self._won:
                 self._win_screen()
@@ -358,8 +370,9 @@ class MarioGame:
 
         self._score = 0
         self._won = False
+        self._exit_to_menu = False
 
-    def _handle_input(self):
+    def _handle_input(self, pressed):
         x, _ = joy_raw()
 
         if x < _JOY_LO:
@@ -369,7 +382,7 @@ class MarioGame:
         else:
             self._pvx = 0
 
-        if _btn.just_pressed() and self._on_ground:
+        if pressed and self._on_ground:
             self._pvy = self.JUMP_V
             self._on_ground = False
             beep(700, 0.5, 0.06)
@@ -444,12 +457,11 @@ class MarioGame:
         led.off()
         display.fill(BLACK)
         display.text("YOU DIED", 85, 140)
-        display.text("Hold A=menu", 68, 175)
+        display.text("Release A", 82, 175)
         refresh()
         sleep(0.4)
-        while not _btn.long_held(700):
-            sleep(0.05)
-        self._won = True
+        wait_btn_release()
+        self._exit_to_menu = True
 
     def _win_screen(self):
         beep(1200, 0.7, 0.12)
@@ -458,11 +470,10 @@ class MarioGame:
         display.fill(BLACK)
         display.text("YOU WIN!", 85, 130)
         display.text("Score: " + str(self._score), 75, 160)
-        display.text("Hold A=menu", 68, 195)
+        display.text("Release A", 82, 195)
         refresh()
         sleep(0.4)
-        while not _btn.long_held(700):
-            sleep(0.05)
+        wait_btn_release()
 
     @staticmethod
     def _hspan(ax, aw, bx, bw):
@@ -483,8 +494,11 @@ _GAMES = [
 def main_menu():
     sel = 0
     n = len(_GAMES)
+    wait_btn_release()
 
     while True:
+        pressed, released, long_hold = _btn_tracker.update()
+
         display.fill(BLACK)
         display.text("=  GAME  MENU  =", 28, 30)
 
@@ -505,10 +519,10 @@ def main_menu():
             sel = (sel + 1) % n
             beep(700, 0.4, 0.04)
 
-        if _btn.just_pressed():
+        if pressed:
             beep(1000, 0.5, 0.05)
-            sleep(0.15)
             _GAMES[sel][1]().run()
+            wait_btn_release()
 
         sleep(0.05)
 
