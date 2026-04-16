@@ -644,12 +644,266 @@ class MarioGame:
     @staticmethod
     def _rects_overlap(ax, ay, aw, ah, bx, by, bw, bh):
         return ax < bx + bw and ax + aw > bx and ay < by + bh and ay + ah > by
+    
+# =============================================================================
+# PONG GAME
+
+class PongGame:
+    PADDLE_W = 6
+    PADDLE_H = 40
+    BALL_SIZE = 6
+
+    PLAYER_X = 10
+    AI_X = DW - 16
+
+    WIN_SCORE = 5
+    PADDLE_SPEED = 6
+    AI_SPEED = 4
+
+    BALL_START_VX = 4
+    BALL_START_VY = 2
+
+    def run(self):
+        self._reset()
+        led.on()
+        wait_btn_release()
+
+        while True:
+            pressed, released, long_hold = _btn_tracker.update()
+
+            if long_hold:
+                led.off()
+                return
+
+            self._handle_input()
+            self._update()
+
+            if self._game_over:
+                self._show_result()
+                led.off()
+                return
+
+            self._draw_partial()
+            sleep(0.03)
+
+    def _reset(self):
+        self._player_y = DH // 2 - self.PADDLE_H // 2
+        self._ai_y = DH // 2 - self.PADDLE_H // 2
+
+        self._player_score = 0
+        self._ai_score = 0
+        self._game_over = False
+
+        self._prev_player_y = self._player_y
+        self._prev_ai_y = self._ai_y
+        self._prev_ball_x = DW // 2
+        self._prev_ball_y = DH // 2
+        self._score_dirty = True
+
+        self._serve(direction=1)
+        self._draw_static()
+        self._draw_score()
+        self._draw_objects_full()
+
+    def _serve(self, direction=1):
+        self._ball_x = DW // 2
+        self._ball_y = DH // 2
+        self._ball_vx = self.BALL_START_VX * direction
+        self._ball_vy = self.BALL_START_VY
+
+        self._prev_ball_x = self._ball_x
+        self._prev_ball_y = self._ball_y
+
+    def _handle_input(self):
+        d = joy_direction()
+
+        self._prev_player_y = self._player_y
+
+        if d == UP:
+            self._player_y -= self.PADDLE_SPEED
+        elif d == DOWN:
+            self._player_y += self.PADDLE_SPEED
+
+        if self._player_y < 0:
+            self._player_y = 0
+        if self._player_y > DH - self.PADDLE_H:
+            self._player_y = DH - self.PADDLE_H
+
+    def _update(self):
+        self._prev_ai_y = self._ai_y
+        self._prev_ball_x = self._ball_x
+        self._prev_ball_y = self._ball_y
+
+        # AI
+        ai_center = self._ai_y + self.PADDLE_H // 2
+        ball_center = self._ball_y + self.BALL_SIZE // 2
+
+        if ai_center < ball_center:
+            self._ai_y += self.AI_SPEED
+        elif ai_center > ball_center:
+            self._ai_y -= self.AI_SPEED
+
+        if self._ai_y < 0:
+            self._ai_y = 0
+        if self._ai_y > DH - self.PADDLE_H:
+            self._ai_y = DH - self.PADDLE_H
+
+        # Ball
+        self._ball_x += self._ball_vx
+        self._ball_y += self._ball_vy
+
+        # Top/bottom bounce
+        if self._ball_y <= 0:
+            self._ball_y = 0
+            self._ball_vy = -self._ball_vy
+            beep(700, 0.3, 0.03)
+
+        if self._ball_y + self.BALL_SIZE >= DH:
+            self._ball_y = DH - self.BALL_SIZE
+            self._ball_vy = -self._ball_vy
+            beep(700, 0.3, 0.03)
+
+        # Player collision
+        if (
+            self._ball_x <= self.PLAYER_X + self.PADDLE_W and
+            self._ball_x + self.BALL_SIZE >= self.PLAYER_X and
+            self._ball_y + self.BALL_SIZE >= self._player_y and
+            self._ball_y <= self._player_y + self.PADDLE_H
+        ):
+            self._ball_x = self.PLAYER_X + self.PADDLE_W
+            self._ball_vx = abs(self._ball_vx)
+
+            offset = (self._ball_y + self.BALL_SIZE // 2) - (self._player_y + self.PADDLE_H // 2)
+            self._ball_vy = max(-6, min(6, offset // 3))
+            beep(900, 0.4, 0.03)
+
+        # AI collision
+        if (
+            self._ball_x + self.BALL_SIZE >= self.AI_X and
+            self._ball_x <= self.AI_X + self.PADDLE_W and
+            self._ball_y + self.BALL_SIZE >= self._ai_y and
+            self._ball_y <= self._ai_y + self.PADDLE_H
+        ):
+            self._ball_x = self.AI_X - self.BALL_SIZE
+            self._ball_vx = -abs(self._ball_vx)
+
+            offset = (self._ball_y + self.BALL_SIZE // 2) - (self._ai_y + self.PADDLE_H // 2)
+            self._ball_vy = max(-6, min(6, offset // 3))
+            beep(900, 0.4, 0.03)
+
+        # Score
+        if self._ball_x < 0:
+            self._ai_score += 1
+            self._score_dirty = True
+            beep(300, 0.5, 0.08)
+
+            if self._ai_score >= self.WIN_SCORE:
+                self._game_over = True
+            else:
+                self._clear_ball(self._prev_ball_x, self._prev_ball_y)
+                self._draw_score()
+                self._serve(direction=1)
+                self._draw_ball(self._ball_x, self._ball_y)
+
+        elif self._ball_x > DW:
+            self._player_score += 1
+            self._score_dirty = True
+            led.toggle()
+            beep(1200, 0.5, 0.08)
+
+            if self._player_score >= self.WIN_SCORE:
+                self._game_over = True
+            else:
+                self._clear_ball(self._prev_ball_x, self._prev_ball_y)
+                self._draw_score()
+                self._serve(direction=-1)
+                self._draw_ball(self._ball_x, self._ball_y)
+
+    # ------------------------------------------------------------------
+    # Draw helpers
+    # ------------------------------------------------------------------
+    def _draw_static(self):
+        display.fill(BLACK)
+
+        y = 0
+        while y < DH:
+            display.fill_rect(DW // 2 - 1, y, 2, 10, WHITE)
+            y += 18
+
+        display.text("HoldA=back", 120, DH - 15)
+
+    def _draw_score(self):
+        display.fill_rect(DW // 2 - 40, 0, 80, 20, BLACK)
+        display.text(str(self._player_score), DW // 2 - 30, 10)
+        display.text(str(self._ai_score), DW // 2 + 20, 10)
+        self._score_dirty = False
+
+    def _draw_paddle(self, x, y, color):
+        display.fill_rect(x, y, self.PADDLE_W, self.PADDLE_H, color)
+
+    def _draw_ball(self, x, y):
+        display.fill_rect(x, y, self.BALL_SIZE, self.BALL_SIZE, WHITE)
+
+    def _clear_ball(self, x, y):
+        display.fill_rect(x, y, self.BALL_SIZE, self.BALL_SIZE, BLACK)
+        self._restore_center_line_rect(x, y, self.BALL_SIZE, self.BALL_SIZE)
+
+    def _clear_paddle(self, x, y):
+        display.fill_rect(x, y, self.PADDLE_W, self.PADDLE_H, BLACK)
+        self._restore_center_line_rect(x, y, self.PADDLE_W, self.PADDLE_H)
+
+    def _restore_center_line_rect(self, x, y, w, h):
+        line_x = DW // 2 - 1
+        if x < line_x + 2 and x + w > line_x:
+            seg_y = 0
+            while seg_y < DH:
+                seg_h = 10
+                if y < seg_y + seg_h and y + h > seg_y:
+                    iy1 = max(y, seg_y)
+                    iy2 = min(y + h, seg_y + seg_h)
+                    if iy2 > iy1:
+                        display.fill_rect(line_x, iy1, 2, iy2 - iy1, WHITE)
+                seg_y += 18
+
+    def _draw_objects_full(self):
+        self._draw_paddle(self.PLAYER_X, self._player_y, GREEN)
+        self._draw_paddle(self.AI_X, self._ai_y, RED)
+        self._draw_ball(self._ball_x, self._ball_y)
+
+    def _draw_partial(self):
+        # erase old
+        self._clear_paddle(self.PLAYER_X, self._prev_player_y)
+        self._clear_paddle(self.AI_X, self._prev_ai_y)
+        self._clear_ball(self._prev_ball_x, self._prev_ball_y)
+
+        # redraw score only if changed
+        if self._score_dirty:
+            self._draw_score()
+
+        # draw new
+        self._draw_paddle(self.PLAYER_X, self._player_y, GREEN)
+        self._draw_paddle(self.AI_X, self._ai_y, RED)
+        self._draw_ball(self._ball_x, self._ball_y)
+
+    def _show_result(self):
+        display.fill(BLACK)
+
+        if self._player_score > self._ai_score:
+            display.text("YOU WIN!", 85, 130)
+        else:
+            display.text("YOU LOSE!", 80, 130)
+
+        display.text("Score: {}-{}".format(self._player_score, self._ai_score), 72, 160)
+        display.text("Release A", 82, 195)
+        sleep(0.4)
+        wait_btn_release()
 # =============================================================================
 # LAUNCHER MENU
 # =============================================================================
 _GAMES = [
     ("Snake", SnakeGame),
     ("Mario", MarioGame),
+    ("Pong", PongGame),
 ]
 def draw_menu_base():
     display.fill(BLACK)
