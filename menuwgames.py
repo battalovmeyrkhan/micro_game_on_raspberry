@@ -3,7 +3,7 @@
 # pibody library | Display 240x320
 # =============================================================================
 
-from pibody import LED, Buzzer, Button, Joystick
+from pibody import LED, Buzzer, Button, Joystick, Switch
 from pibody import display as _display_obj
 from time import sleep, ticks_ms, ticks_diff
 
@@ -23,6 +23,7 @@ btn      = Button("A")
 led      = LED("B")
 joystick = Joystick("F")
 buzzer   = Buzzer("C")
+switch   = Switch("D")
 display  = _display_obj
 
 # -----------------------------------------------------------------------------
@@ -45,7 +46,7 @@ DH = display.height
 # =============================================================================
 
 def refresh():
-    # This display updates immediately, no display.show()
+    
     pass
 
 def beep(freq, volume, duration):
@@ -99,6 +100,24 @@ _btn_active = 0 if _btn_idle == 1 else 1
 
 def btn_is_down():
     return btn.value() == _btn_active
+
+def sound_enabled():
+    return switch.value() == 1
+
+def beep(freq, volume, duration):
+    # если выключен switch — вообще не издаем звук
+    if not sound_enabled():
+        return
+
+    try:
+        buzzer.make_sound(freq, volume, duration)
+    except TypeError:
+        try:
+            buzzer.make_sound(freq, volume, duration, False)
+        except:
+            pass
+    except:
+        pass
 
 def wait_btn_release():
     while btn_is_down():
@@ -179,7 +198,6 @@ class SnakeGame:
         self._reset()
         led.on()
         wait_btn_release()
-        self._draw()
 
         while True:
             pressed, released, long_hold = _btn_tracker.update()
@@ -197,8 +215,8 @@ class SnakeGame:
                 self._update()
                 updated = True
 
-            if updated:
-                self._draw()
+            if updated and self._alive:
+                self._draw_partial()
 
             if not self._alive:
                 self._show_game_over()
@@ -213,13 +231,12 @@ class SnakeGame:
 
                     if released:
                         self._reset()
-                        self._draw()
                         wait_btn_release()
                         break
 
                     sleep(0.05)
 
-            sleep(0.05)
+            sleep(0.03)
 
     def _reset(self):
         cx, cy = self.COLS // 2, self.ROWS // 2
@@ -230,17 +247,50 @@ class SnakeGame:
         self._alive = True
         self._tick = 0
         self._speed = 8
+
         self._place_food()
 
+        self._last_old_head = None
+        self._last_new_head = None
+        self._last_old_tail = None
+
+        self._draw_static()
+        self._draw_full_snake()
+
+    def _cell_xy(self, c, r):
+        return c * self.CELL + 1, r * self.CELL + 1
+
+    def _draw_cell(self, c, r, color):
+        x, y = self._cell_xy(c, r)
+        display.fill_rect(x, y, self.CELL - 2, self.CELL - 2, color)
+
+    def _draw_static(self):
+        display.fill(BLACK)
+        display.rect(0, 0, DW, DH, GREEN)
+
+        fc, fr = self._food
+        self._draw_cell(fc, fr, RED)
+
+        display.fill_rect(0, 0, 120, 16, BLACK)
+        display.text("Score:" + str(self._score), 4, 4)
+
+    def _draw_full_snake(self):
+        for i, (c, r) in enumerate(self._snake):
+            self._draw_cell(c, r, WHITE if i == 0 else GREEN)
+
+    def _draw_score(self):
+        display.fill_rect(0, 0, 120, 16, BLACK)
+        display.text("Score:" + str(self._score), 4, 4)
+
     def _place_food(self):
-     while True:
-        f = (
-            randint(1, self.COLS - 2),
-            randint(1, self.ROWS - 2)
-        )
-        if f not in self._snake and f != self._snake[0]:
-            self._food = f
-            return
+        while True:
+            f = (
+                randint(1, self.COLS - 2),
+                randint(1, self.ROWS - 2)
+            )
+            if f not in self._snake:
+                self._food = f
+                return
 
     def _handle_input(self):
         d = _joy_edge.get()
@@ -277,33 +327,43 @@ class SnakeGame:
             self._alive = False
             return
 
+        old_head = self._snake[0]
+        old_tail = None
+
         self._snake.insert(0, new_head)
 
         if new_head == self._food:
             self._score += 1
             led.toggle()
             beep(900, 0.6, 0.05)
+
             self._place_food()
+            fc, fr = self._food
+            self._draw_cell(fc, fr, RED)
+            self._draw_score()
+
             if self._speed > 2:
                 self._speed -= 1
         else:
-            self._snake.pop()
+            old_tail = self._snake.pop()
 
-    def _draw(self):
-        display.fill(BLACK)
-        display.rect(0, 0, DW, DH, GREEN)
+        self._last_old_head = old_head
+        self._last_new_head = new_head
+        self._last_old_tail = old_tail
 
-        fc, fr = self._food
-        display.fill_rect(fc * self.CELL + 1, fr * self.CELL + 1,
-                          self.CELL - 2, self.CELL - 2, RED)
+    def _draw_partial(self):
+        old_head = self._last_old_head
+        new_head = self._last_new_head
+        old_tail = self._last_old_tail
 
-        for i, (sc, sr) in enumerate(self._snake):
-            color = WHITE if i == 0 else GREEN
-            display.fill_rect(sc * self.CELL + 1, sr * self.CELL + 1,
-                              self.CELL - 2, self.CELL - 2, color)
+        if old_head is not None:
+            self._draw_cell(old_head[0], old_head[1], GREEN)
 
-        display.text("Score:" + str(self._score), 4, 4)
-        refresh()
+        if new_head is not None:
+            self._draw_cell(new_head[0], new_head[1], WHITE)
+
+        if old_tail is not None:
+            self._draw_cell(old_tail[0], old_tail[1], BLACK)
 
     def _show_game_over(self):
         beep(300, 0.8, 0.4)
@@ -312,7 +372,6 @@ class SnakeGame:
         display.text("GAME OVER", 70, 120)
         display.text("Release = Restart", 45, 150)
         display.text("Hold A = Menu", 55, 180)
-        refresh()
         sleep(0.3)
 
 # =============================================================================
@@ -335,8 +394,10 @@ class MarioGame:
         (40,  140, 80,  8),
     ]
 
-    FLAG_X = DW - 30
-    FLAG_Y = PLATFORMS[3][1] - 32
+    plx, ply, plw, plh = PLATFORMS[3]
+
+    FLAG_X = plx + plw - 70
+    FLAG_Y = ply - 30
 
     def run(self):
         self._reset()
@@ -352,7 +413,6 @@ class MarioGame:
 
             self._handle_input(pressed)
             self._update()
-            self._draw()
 
             if self._exit_to_menu:
                 led.off()
@@ -363,7 +423,8 @@ class MarioGame:
                 led.off()
                 return
 
-            sleep(0.06)
+            self._draw_partial()
+            sleep(0.05)
 
     def _reset(self):
         self._px = 10.0
@@ -381,6 +442,18 @@ class MarioGame:
         self._won = False
         self._exit_to_menu = False
 
+        self._prev_px = int(self._px)
+        self._prev_py = int(self._py)
+        self._prev_ex = int(self._ex)
+        self._prev_ey = int(self._ey)
+        self._prev_enemy_alive = self._enemy_alive
+        self._score_dirty = True
+
+        self._draw_static()
+        self._draw_player(int(self._px), int(self._py))
+        if self._enemy_alive:
+            self._draw_enemy(int(self._ex), int(self._ey))
+
     def _handle_input(self, pressed):
         x, _ = joy_raw()
 
@@ -397,6 +470,13 @@ class MarioGame:
             beep(700, 0.5, 0.06)
 
     def _update(self):
+        # сохранить старые позиции перед движением
+        self._prev_px = int(self._px)
+        self._prev_py = int(self._py)
+        self._prev_ex = int(self._ex)
+        self._prev_ey = int(self._ey)
+        self._prev_enemy_alive = self._enemy_alive
+
         self._pvy += self.GRAVITY
         self._px += self._pvx
         self._py += self._pvy
@@ -429,16 +509,28 @@ class MarioGame:
                     self._enemy_alive = False
                     self._pvy = self.JUMP_V // 2
                     self._score += 1
+                    self._score_dirty = True
                     beep(600, 0.6, 0.07)
                     led.toggle()
                 else:
                     self._death_screen()
                     return
 
-        if int(self._px) + self.PW >= self.FLAG_X and int(self._py) <= self.FLAG_Y + 30:
+        player_x = int(self._px)
+        player_y = int(self._py)
+
+        if (
+            player_x + self.PW >= self.FLAG_X and
+            player_x <= self.FLAG_X + 10 and
+            player_y + self.PH >= self.FLAG_Y and
+            player_y <= self.FLAG_Y + 30
+        ):
             self._won = True
 
-    def _draw(self):
+    # -------------------------------------------------------------------------
+    # DRAW HELPERS
+    # -------------------------------------------------------------------------
+    def _draw_static(self):
         display.fill(BLACK)
 
         for i, (plx, ply, plw, plh) in enumerate(self.PLATFORMS):
@@ -447,27 +539,82 @@ class MarioGame:
         display.line(self.FLAG_X, self.FLAG_Y, self.FLAG_X, self.FLAG_Y + 30, WHITE)
         display.fill_rect(self.FLAG_X + 1, self.FLAG_Y, 10, 8, RED)
 
-        if self._enemy_alive:
-            ex, ey = int(self._ex), int(self._ey)
-            display.fill_rect(ex, ey, self.EW, self.EH, RED)
-            display.pixel(ex + 2, ey + 2, WHITE)
-            display.pixel(ex + 10, ey + 2, WHITE)
+        self._draw_score()
 
-        px, py = int(self._px), int(self._py)
+    def _draw_score(self):
+        display.fill_rect(0, 0, DW, 16, BLACK)
+        display.text("Pts:" + str(self._score), 4, 4)
+        display.text("HoldA=back", 140, 4)
+        self._score_dirty = False
+
+    def _draw_player(self, px, py):
         display.fill_rect(px, py + 4, self.PW, self.PH - 4, CYAN)
         display.fill_rect(px, py, self.PW, 6, RED)
 
-        display.text("Pts:" + str(self._score), 4, 4)
-        display.text("HoldA=back", 140, 4)
-        refresh()
+    def _draw_enemy(self, ex, ey):
+        display.fill_rect(ex, ey, self.EW, self.EH, RED)
+        display.pixel(ex + 2, ey + 2, WHITE)
+        display.pixel(ex + 10, ey + 2, WHITE)
 
+    def _restore_bg_rect(self, x, y, w, h):
+        # базовый фон
+        display.fill_rect(x, y, w, h, BLACK)
+
+        # восстановить платформы в области
+        for i, (plx, ply, plw, plh) in enumerate(self.PLATFORMS):
+            if self._rects_overlap(x, y, w, h, plx, ply, plw, plh):
+                color = GREEN if i == 0 else YELLOW
+                ix1 = max(x, plx)
+                iy1 = max(y, ply)
+                ix2 = min(x + w, plx + plw)
+                iy2 = min(y + h, ply + plh)
+                if ix2 > ix1 and iy2 > iy1:
+                    display.fill_rect(ix1, iy1, ix2 - ix1, iy2 - iy1, color)
+
+        # восстановить флагшток, если зона его задела
+        if self._rects_overlap(x, y, w, h, self.FLAG_X, self.FLAG_Y, 1, 31):
+            line_y1 = max(y, self.FLAG_Y)
+            line_y2 = min(y + h, self.FLAG_Y + 31)
+            if line_y2 > line_y1:
+                display.line(self.FLAG_X, line_y1, self.FLAG_X, line_y2 - 1, WHITE)
+
+        # восстановить флаг, если зона его задела
+        if self._rects_overlap(x, y, w, h, self.FLAG_X + 1, self.FLAG_Y, 10, 8):
+            ix1 = max(x, self.FLAG_X + 1)
+            iy1 = max(y, self.FLAG_Y)
+            ix2 = min(x + w, self.FLAG_X + 11)
+            iy2 = min(y + h, self.FLAG_Y + 8)
+            if ix2 > ix1 and iy2 > iy1:
+                display.fill_rect(ix1, iy1, ix2 - ix1, iy2 - iy1, RED)
+
+    def _draw_partial(self):
+        # стереть старого игрока
+        self._restore_bg_rect(self._prev_px, self._prev_py, self.PW, self.PH)
+
+        # стереть старого врага
+        if self._prev_enemy_alive:
+            self._restore_bg_rect(self._prev_ex, self._prev_ey, self.EW, self.EH)
+
+        # если счёт изменился, обновить HUD
+        if self._score_dirty:
+            self._draw_score()
+
+        # нарисовать нового игрока
+        self._draw_player(int(self._px), int(self._py))
+
+        # нарисовать нового врага
+        if self._enemy_alive:
+            self._draw_enemy(int(self._ex), int(self._ey))
+
+    # -------------------------------------------------------------------------
+    # SCREENS
+    # -------------------------------------------------------------------------
     def _death_screen(self):
         beep(250, 0.9, 0.5)
         led.off()
         display.fill(BLACK)
         display.text("YOU DIED", 85, 140)
         display.text("Release A", 82, 175)
-        refresh()
         sleep(0.4)
         wait_btn_release()
         self._exit_to_menu = True
@@ -480,10 +627,12 @@ class MarioGame:
         display.text("YOU WIN!", 85, 130)
         display.text("Score: " + str(self._score), 75, 160)
         display.text("Release A", 82, 195)
-        refresh()
         sleep(0.4)
         wait_btn_release()
 
+    # -------------------------------------------------------------------------
+    # GEOMETRY
+    # -------------------------------------------------------------------------
     @staticmethod
     def _hspan(ax, aw, bx, bw):
         return ax < bx + bw and ax + aw > bx
@@ -492,6 +641,9 @@ class MarioGame:
     def _aabb(ax, ay, aw, ah, bx, by, bw, bh):
         return ax < bx + bw and ax + aw > bx and ay < by + bh and ay + ah > by
 
+    @staticmethod
+    def _rects_overlap(ax, ay, aw, ah, bx, by, bw, bh):
+        return ax < bx + bw and ax + aw > bx and ay < by + bh and ay + ah > by
 # =============================================================================
 # LAUNCHER MENU
 # =============================================================================
@@ -499,45 +651,58 @@ _GAMES = [
     ("Snake", SnakeGame),
     ("Mario", MarioGame),
 ]
+def draw_menu_base():
+    display.fill(BLACK)
+    display.text("=  GAME  MENU  =", 28, 30)
+
+    for i, (name, _cls) in enumerate(_GAMES):
+        y = 90 + i * 40
+        display.text(name, 70, y)
+
+    display.text("A = launch game", 35, DH - 50)
+    display.text("Hold A = menu", 40, DH - 30)
+
+def draw_cursor(row, selected):
+    y = 90 + row * 40
+    mark = ">" if selected else " "
+    display.fill_rect(50, y, 12, 12, BLACK)
+    display.text(mark, 50, y)
 
 def main_menu():
     sel = 0
     n = len(_GAMES)
     wait_btn_release()
-    need_redraw = True
+
+    draw_menu_base()
+    draw_cursor(sel, True)
+    refresh()
 
     while True:
         pressed, released, long_hold = _btn_tracker.update()
 
-        if need_redraw:
-            display.fill(BLACK)
-            display.text("=  GAME  MENU  =", 28, 30)
-
-            for i, (name, _cls) in enumerate(_GAMES):
-                y = 90 + i * 40
-                label = ">  " + name if i == sel else "   " + name
-                display.text(label, 50, y)
-
-            display.text("A = launch game", 35, DH - 50)
-            display.text("Hold A = menu", 40, DH - 30)
-            refresh()
-            need_redraw = False
-
+        old_sel = sel
         d = _joy_edge.get()
+
         if d == UP:
             sel = (sel - 1) % n
-            beep(700, 0.4, 0.04)
-            need_redraw = True
         elif d == DOWN:
             sel = (sel + 1) % n
+
+        if sel != old_sel:
+            draw_cursor(old_sel, False)
+            draw_cursor(sel, True)
             beep(700, 0.4, 0.04)
-            need_redraw = True
+            refresh()
 
         if pressed:
             beep(1000, 0.5, 0.05)
             _GAMES[sel][1]().run()
             wait_btn_release()
-            need_redraw = True
+
+            
+            draw_menu_base()
+            draw_cursor(sel, True)
+            refresh()
 
         sleep(0.08)
 
